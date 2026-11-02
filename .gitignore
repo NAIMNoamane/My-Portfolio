@@ -1,0 +1,8 @@
+node_modules/
+*.log
+archive/
+evidence/
+scripts/
+content-source.md
+package.json
+README.md
