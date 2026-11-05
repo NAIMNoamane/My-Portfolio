@@ -44,15 +44,26 @@
   // Custom WebGL2 point sprites. The original photo is sampled without altering its pixels.
   const canvas=document.querySelector('#portrait-canvas');
   const fallback=document.querySelector('#hero-fallback');
+  // Contain the supplied cutout at its natural size; only scale down on smaller screens.
+  function fitPortrait(){
+    const width=hero.clientWidth,height=hero.clientHeight,title=hero.querySelector('.hero-title');
+    const top=width<768?title.offsetTop+title.offsetHeight+16:Math.max(84,height*.10);
+    const naturalWidth=fallback.naturalWidth||464,naturalHeight=fallback.naturalHeight||537;
+    const scale=Math.min(1,Math.max(1,width-48)/naturalWidth,Math.max(1,height-top-16)/naturalHeight);
+    const photoWidth=naturalWidth*scale,photoHeight=naturalHeight*scale;
+    fallback.style.width=photoWidth+'px';fallback.style.height=photoHeight+'px';fallback.style.top=top+'px';
+    return [(width-photoWidth)/2,top,photoWidth,photoHeight];
+  }
+  fitPortrait();
   const gl=canvas.getContext('webgl2',{alpha:true,antialias:false,premultipliedAlpha:false});
   let requestPortrait=()=>{};
-  function useFallback(){canvas.style.display='none';fallback.style.display='block';finishIntro();}
+  function useFallback(){canvas.style.display='none';fallback.style.display='block';finishIntro();new ResizeObserver(fitPortrait).observe(hero);}
   if(!gl)useFallback();
   else {
     try {
       const vertex=`#version 300 es
       precision highp float;
-      in vec2 aHome; in vec3 aColor; in float aSeed;
+      in vec2 aHome; in vec3 aColor; in float aSeed; in float aOpacity;
       uniform vec2 uScreen; uniform vec4 uPhoto; uniform vec2 uPointer;
       uniform float uTime; uniform float uScatter; uniform float uDpr; uniform float uStep;
       out vec3 vColor; out float vSeed; out float vAlpha;
@@ -60,8 +71,7 @@
         float delay=aSeed*.65;
         float progress=clamp((uTime-delay)/1.9,0.,1.);
         progress=1.-pow(1.-progress,3.);
-        vec2 shape=aHome; float torso=max(0.,shape.y-.65); shape.x=.5+(shape.x-.5)*(1.+torso*1.7); shape.y+=torso*1.15;
-        vec2 home=uPhoto.xy+shape*uPhoto.zw;
+        vec2 home=uPhoto.xy+aHome*uPhoto.zw;
         float dispersal=(1.-progress)+uScatter;
         vec2 offset=vec2(sin(aSeed*127.1),cos(aSeed*311.7))*vec2(uScreen.x*.85,uScreen.y*.8)*dispersal;
         vec2 delta=home-uPointer;float distance=length(delta);
@@ -70,7 +80,7 @@
         gl_Position=vec4(pos.x/uScreen.x*2.-1.,1.-pos.y/uScreen.y*2.,0.,1.);
         float lum=dot(aColor,vec3(.299,.587,.114));
         gl_PointSize=max(1.,uStep*(.28+lum*.76)*uDpr*(1.+push*.3));
-        vColor=aColor;vSeed=aSeed;vAlpha=progress*(1.-uScatter*.85);
+        vColor=aColor;vSeed=aSeed;vAlpha=aOpacity*progress*(1.-uScatter*.85);
       }`;
       const fragment=`#version 300 es
       precision highp float;
@@ -95,15 +105,15 @@
       let count=0,width=0,height=0,photoRect=[0,0,0,0],step=4,raf=0,visible=true;
       const pointer={x:-10000,y:-10000,tx:-10000,ty:-10000};
       let start=performance.now()+2300;
-      function resize(){width=hero.clientWidth;height=hero.clientHeight;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);gl.viewport(0,0,canvas.width,canvas.height);const mobile=width<768;const ph=height*(mobile?.70:.72),pw=ph*1206/1396;photoRect=[(width-pw)/2,height*(mobile?.37:.10),pw,ph];step=pw/150;gl.uniform2f(uniforms.uScreen,width,height);gl.uniform4fv(uniforms.uPhoto,photoRect);gl.uniform1f(uniforms.uDpr,dpr);gl.uniform1f(uniforms.uStep,step);requestPortrait();}
+      function resize(){width=hero.clientWidth;height=hero.clientHeight;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);gl.viewport(0,0,canvas.width,canvas.height);photoRect=fitPortrait();step=photoRect[2]/150;gl.uniform2f(uniforms.uScreen,width,height);gl.uniform4fv(uniforms.uPhoto,photoRect);gl.uniform1f(uniforms.uDpr,dpr);gl.uniform1f(uniforms.uStep,step);requestPortrait();}
       function render(now){raf=0;if(!count||!visible||document.hidden)return;gl.useProgram(program);pointer.x+=(pointer.tx-pointer.x)*.18;pointer.y+=(pointer.ty-pointer.y)*.18;const scatter=reduce.matches?0:Math.min(1,scrollY/(height*.7));const time=reduce.matches||location.hash?10:Math.max(0,(now-start)/1000);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.uniform1f(uniforms.uTime,time);gl.uniform1f(uniforms.uScatter,scatter);gl.uniform2f(uniforms.uPointer,pointer.x,pointer.y);gl.drawArrays(gl.POINTS,0,count);canvas.dataset.state=scatter>=1?'gone':scatter>0?'scattering':time<2.55?'gathering':'formed';if(time<2.6||Math.abs(pointer.tx-pointer.x)>.1||Math.abs(pointer.ty-pointer.y)>.1)requestPortrait();}
       requestPortrait=()=>{if(!raf&&visible&&!document.hidden)raf=requestAnimationFrame(render);};
-      loadImage('assets/naim-noamane.jpeg').then(image=>{
+      loadImage(fallback.src).then(image=>{
         const sample=document.createElement('canvas');sample.width=150;sample.height=Math.round(150*image.height/image.width);const ctx=sample.getContext('2d',{willReadFrequently:true});
-        // Silhouette follows the supplied photo; the mask is a rendering boundary, not a replacement portrait.
-        ctx.save();ctx.scale(sample.width,sample.height);ctx.beginPath();ctx.moveTo(.49,.052);ctx.bezierCurveTo(.70,.035,.78,.17,.775,.32);ctx.bezierCurveTo(.817,.326,.803,.425,.775,.448);ctx.bezierCurveTo(.75,.57,.65,.65,.61,.678);ctx.lineTo(.63,.705);ctx.bezierCurveTo(.73,.75,.92,.79,1,.86);ctx.lineTo(1,1);ctx.lineTo(0,1);ctx.lineTo(0,.85);ctx.bezierCurveTo(.08,.79,.28,.75,.37,.70);ctx.lineTo(.385,.675);ctx.bezierCurveTo(.28,.61,.23,.51,.222,.43);ctx.bezierCurveTo(.18,.41,.17,.33,.22,.325);ctx.bezierCurveTo(.215,.20,.27,.065,.49,.052);ctx.closePath();ctx.restore();ctx.clip();ctx.drawImage(image,0,0,sample.width,sample.height);const pixels=ctx.getImageData(0,0,sample.width,sample.height).data;const home=[],colors=[],seeds=[];
-        for(let y=0;y<sample.height;y++)for(let x=0;x<sample.width;x++){const i=(y*sample.width+x)*4;if(pixels[i+3]<128)continue;home.push(x/sample.width,y/sample.height);colors.push(pixels[i]/255,pixels[i+1]/255,pixels[i+2]/255);const n=Math.sin(x*12.9898+y*78.233)*43758.5453;seeds.push(n-Math.floor(n));}
-        for(const[name,size,data]of[['aHome',2,home],['aColor',3,colors],['aSeed',1,seeds]]){const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);const loc=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,0,0);}count=seeds.length;canvas.dataset.points=String(count);resize();requestPortrait();
+        // Use the PNG alpha channel for the outline and soft edge pixels.
+        ctx.drawImage(image,0,0,sample.width,sample.height);const pixels=ctx.getImageData(0,0,sample.width,sample.height).data;const home=[],colors=[],seeds=[],opacities=[];
+        for(let y=0;y<sample.height;y++)for(let x=0;x<sample.width;x++){const i=(y*sample.width+x)*4;if(pixels[i+3]===0)continue;opacities.push(pixels[i+3]/255);home.push(x/sample.width,y/sample.height);colors.push(pixels[i]/255,pixels[i+1]/255,pixels[i+2]/255);const n=Math.sin(x*12.9898+y*78.233)*43758.5453;seeds.push(n-Math.floor(n));}
+        for(const[name,size,data]of[['aHome',2,home],['aColor',3,colors],['aSeed',1,seeds],['aOpacity',1,opacities]]){const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);const loc=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,0,0);}count=seeds.length;canvas.dataset.points=String(count);resize();requestPortrait();
       }).catch(useFallback);
       Promise.all(['habitflow-BhEplUHh.jpg','expense-sbI4i9tg.jpg','mindpixel-Bx0qpjdU.jpg','ecommerce-DVISmkX7.jpg'].map(name=>loadImage('assets/reference/'+name))).then(images=>{const atlas=document.createElement('canvas');atlas.width=512;atlas.height=512;const ctx=atlas.getContext('2d');images.forEach((im,i)=>ctx.drawImage(im,(i%2)*256,Math.floor(i/2)*256,256,256));gl.bindTexture(gl.TEXTURE_2D,texture);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,atlas);gl.uniform1f(uniforms.uTexture,1);requestPortrait();}).catch(()=>{});
       hero.addEventListener('pointermove',e=>{if(!fine.matches||reduce.matches)return;const rect=hero.getBoundingClientRect();pointer.tx=e.clientX;pointer.ty=e.clientY-rect.top;if(pointer.x<-999) {pointer.x=pointer.tx;pointer.y=pointer.ty;}requestPortrait();});
